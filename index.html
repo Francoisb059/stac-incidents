@@ -191,7 +191,7 @@ textarea{resize:vertical;min-height:56px}
     </div>
     <div class="login-err" id="login-err"></div>
     <button class="btn-login" id="btn-connect" onclick="doLogin()">Se connecter</button>
-    <p style="font-size:.7rem;color:#9ca3af;margin-top:14px">v2.1 — Données synchronisées sur Google Sheets</p>
+    <p style="font-size:.7rem;color:#9ca3af;margin-top:14px">v2.2 — Données synchronisées sur Google Sheets</p>
   </div>
 </div>
 
@@ -199,7 +199,7 @@ textarea{resize:vertical;min-height:56px}
 <div id="app" style="display:none">
   <header>
     <img id="header-logo" src="" alt="Saint-Gobain DSC">
-    <div class="hinfo"><h1>Incidents Stock</h1><p>STAC Sud-Est v2.1</p></div>
+    <div class="hinfo"><h1>Incidents Stock</h1><p>STAC Sud-Est v2.2</p></div>
     <div class="agent-badge">
       <span>👤</span>
       <span id="badge-name">—</span>
@@ -431,6 +431,11 @@ function startApp() {
   if (currentUser.role === 'responsable')
     document.getElementById('badge-role').style.display = 'inline';
   document.getElementById('f-agent').value = currentUser.numero + ' — ' + currentUser.nom;
+  // Pré-remplir la zone de travail depuis le profil agent (modifiable)
+  var wz = document.getElementById('f-workzone');
+  if (currentUser.zone && currentUser.zone !== 'ALL') {
+    wz.value = currentUser.zone;
+  }
   showTab(0);
 }
 
@@ -594,32 +599,100 @@ function saveIncident() {
   var btn = document.getElementById('btn-save');
   var st  = document.getElementById('save-status');
   btn.disabled = true;
-  st.textContent = '⏳ Envoi en cours…';
+  st.textContent = '⏳ Enregistrement…';
 
+  var pin   = sessionStorage.getItem('stac_pin') || '';
+  var photo = currentPhoto || '';
+
+  // ── ÉTAPE 1 : sauvegarder les données texte (sans photo) ──
   apiCall({
     action   : 'saveIncident',
     agent    : currentUser.numero,
-    pin      : sessionStorage.getItem('stac_pin') || '',
+    pin      : pin,
     workzone : wz,
     type     : type,
     zone     : zone,
-    comments : document.getElementById('f-comments').value.trim(),
-    photo    : currentPhoto || ''
+    comments : document.getElementById('f-comments').value.trim()
   }, function(data) {
-    btn.disabled = false;
     if (data && data.ok) {
-      st.textContent = '✅ Synchronisé — ' + data.id;
-      toast('✅ Incident enregistré dans Google Sheets');
-      resetForm();
-      incidentsCache = [];
+      var incId = data.id;
+
+      // ── ÉTAPE 2 : envoyer la photo séparément si présente ──
+      if (photo && photo.length > 0) {
+        st.textContent = '⏳ Envoi de la photo…';
+
+        // Découper la photo en morceaux de 50000 chars max pour l'URL
+        var CHUNK = 50000;
+        var chunks = [];
+        for (var i = 0; i < photo.length; i += CHUNK) {
+          chunks.push(photo.slice(i, i + CHUNK));
+        }
+        var total = chunks.length;
+
+        // Envoyer chunk par chunk
+        function sendChunk(idx) {
+          if (idx >= total) {
+            // Tous les chunks envoyés — finaliser
+            apiCall({
+              action : 'finalizePhoto',
+              agent  : currentUser.numero,
+              pin    : pin,
+              id     : incId,
+              total  : total
+            }, function(pr) {
+              btn.disabled = false;
+              if (pr && pr.ok) {
+                st.textContent = '✅ Synchronisé avec photo — ' + incId;
+                toast('✅ Incident + photo enregistrés');
+              } else {
+                st.textContent = '✅ Incident enregistré (photo partielle)';
+                toast('✅ Incident enregistré, photo incomplète');
+              }
+              resetForm(); incidentsCache = [];
+            }, function() {
+              btn.disabled = false;
+              st.textContent = '✅ Incident enregistré (photo non confirmée)';
+              resetForm(); incidentsCache = [];
+            });
+            return;
+          }
+          st.textContent = '⏳ Photo ' + (idx+1) + '/' + total + '…';
+          apiCall({
+            action : 'updatePhoto',
+            agent  : currentUser.numero,
+            pin    : pin,
+            id     : incId,
+            chunk  : idx,
+            total  : total,
+            data   : chunks[idx]
+          }, function() { sendChunk(idx + 1); },
+             function() {
+               // Photo échouée mais incident sauvé
+               btn.disabled = false;
+               st.textContent = '✅ Incident enregistré (photo échouée)';
+               toast('✅ Incident enregistré. Photo non envoyée (réseau).');
+               resetForm(); incidentsCache = [];
+             });
+        }
+        sendChunk(0);
+
+      } else {
+        // Pas de photo
+        btn.disabled = false;
+        st.textContent = '✅ Synchronisé — ' + incId;
+        toast('✅ Incident enregistré dans Google Sheets');
+        resetForm(); incidentsCache = [];
+      }
+
     } else {
+      btn.disabled = false;
       st.textContent = '❌ ' + ((data && data.error) || 'Erreur inconnue');
-      toast('❌ Échec enregistrement');
+      toast('❌ Échec enregistrement. Réessayez.');
     }
   }, function() {
     btn.disabled = false;
-    st.textContent = '❌ Hors ligne. Réessayez.';
-    toast('❌ Pas de connexion');
+    st.textContent = '❌ Serveur inaccessible. Réessayez.';
+    toast('❌ Serveur inaccessible. Vérifiez le déploiement Apps Script.');
   });
 }
 
