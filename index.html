@@ -191,7 +191,7 @@ textarea{resize:vertical;min-height:56px}
     </div>
     <div class="login-err" id="login-err"></div>
     <button class="btn-login" id="btn-connect" onclick="doLogin()">Se connecter</button>
-    <p style="font-size:.7rem;color:#9ca3af;margin-top:14px">v2.3 — Données synchronisées sur Google Sheets</p>
+    <p style="font-size:.7rem;color:#9ca3af;margin-top:14px">v2.4 — Données synchronisées sur Google Sheets</p>
   </div>
 </div>
 
@@ -199,7 +199,7 @@ textarea{resize:vertical;min-height:56px}
 <div id="app" style="display:none">
   <header>
     <img id="header-logo" src="" alt="Saint-Gobain DSC">
-    <div class="hinfo"><h1>Incidents Stock</h1><p>STAC Sud-Est v2.3</p></div>
+    <div class="hinfo"><h1>Incidents Stock</h1><p>STAC Sud-Est v2.4</p></div>
     <div class="agent-badge">
       <span>👤</span>
       <span id="badge-name">—</span>
@@ -239,15 +239,14 @@ textarea{resize:vertical;min-height:56px}
         <label>Type de problème <span class="req">*</span></label>
         <select id="f-type">
           <option value="">-- Sélectionnez un type --</option>
-          <option>Erreur de quantité</option>
-          <option>Absence de code barre</option>
-          <option>Code barre HS / illisible</option>
-          <option>Erreur de produits dans la zone de picking</option>
-          <option>Contenant trop grand (C32, C43 ou enveloppe)</option>
-          <option>Emplacement picking trop petit</option>
-          <option>Désordre dans la zone</option>
-          <option>Produits abîmés à l'emplacement</option>
-          <option>Stock insuffisant (F16)</option>
+          <option value="Absence code barre">1. Absence code barre</option>
+          <option value="Code barre HS ou illisible">2. Code barre HS ou illisible</option>
+          <option value="Erreur quantité picking">3. Erreur quantité picking</option>
+          <option value="Produits cassés / abîmés">4. Produits cassés / abîmés</option>
+          <option value="Erreurs produits">5. Erreurs produits</option>
+          <option value="Désordre emplacement">6. Désordre emplacement</option>
+          <option value="Picking trop petit">7. Picking trop petit</option>
+          <option value="Autre (voir commentaires)">8. Autre — précision dans commentaires</option>
         </select>
 
         <label>Emplacement <span class="req">*</span></label>
@@ -432,25 +431,23 @@ function startApp() {
     document.getElementById('badge-role').style.display = 'inline';
   document.getElementById('f-agent').value = currentUser.numero + ' — ' + currentUser.nom;
   showTab(0);
-  // Pré-remplir la zone de travail depuis le profil agent (modifiable)
-  // Délai court pour s'assurer que le DOM est rendu
-  setTimeout(function() {
-    var wz = document.getElementById('f-workzone');
-    if (currentUser.zone && currentUser.zone !== 'ALL') {
-      wz.value = currentUser.zone;
-      // Vérifier que la valeur a bien été settée
-      if (!wz.value) {
-        // Chercher l'option correspondante manuellement
-        for (var i = 0; i < wz.options.length; i++) {
-          if (wz.options[i].value === currentUser.zone ||
-              wz.options[i].text  === currentUser.zone) {
-            wz.selectedIndex = i;
-            break;
-          }
-        }
-      }
+  fillAgentZone();
+}
+
+// Pré-remplir la zone depuis le profil agent — appelé à chaque reset de formulaire
+function fillAgentZone() {
+  if (!currentUser) return;
+  var wz = document.getElementById('f-workzone');
+  if (!wz) return;
+  var zone = currentUser.zone || '';
+  if (!zone || zone === 'ALL') return;
+  // Parcourir toutes les options pour trouver la correspondance exacte
+  for (var i = 0; i < wz.options.length; i++) {
+    if (wz.options[i].value === zone || wz.options[i].text === zone) {
+      wz.selectedIndex = i;
+      return;
     }
-  }, 100);
+  }
 }
 
 // ═══════════════════════════════════════════════════
@@ -714,6 +711,7 @@ function resetForm() {
   document.getElementById('f-comments').value = '';
   document.getElementById('scan-result').style.display = 'none';
   deletePhoto();
+  fillAgentZone();   // remettre la zone de l'agent après reset
 }
 
 // ═══════════════════════════════════════════════════
