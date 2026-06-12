@@ -191,7 +191,7 @@ textarea{resize:vertical;min-height:56px}
     </div>
     <div class="login-err" id="login-err"></div>
     <button class="btn-login" id="btn-connect" onclick="doLogin()">Se connecter</button>
-    <p style="font-size:.7rem;color:#9ca3af;margin-top:14px">v2.2 — Données synchronisées sur Google Sheets</p>
+    <p style="font-size:.7rem;color:#9ca3af;margin-top:14px">v2.3 — Données synchronisées sur Google Sheets</p>
   </div>
 </div>
 
@@ -199,7 +199,7 @@ textarea{resize:vertical;min-height:56px}
 <div id="app" style="display:none">
   <header>
     <img id="header-logo" src="" alt="Saint-Gobain DSC">
-    <div class="hinfo"><h1>Incidents Stock</h1><p>STAC Sud-Est v2.2</p></div>
+    <div class="hinfo"><h1>Incidents Stock</h1><p>STAC Sud-Est v2.3</p></div>
     <div class="agent-badge">
       <span>👤</span>
       <span id="badge-name">—</span>
@@ -229,9 +229,9 @@ textarea{resize:vertical;min-height:56px}
             <label>Zone de travail <span class="req">*</span></label>
             <select id="f-workzone">
               <option value="">-- Sélectionner --</option>
-              <option>BUREAU</option><option>CHA</option><option>CHARGE</option>
-              <option>CLIM</option><option>MEZZ</option><option>REG</option>
-              <option>RPP</option><option>SAN</option><option>TUB</option>
+              <option value="BUREAU">BUREAU</option><option value="CHA">CHA</option><option value="CHARGE">CHARGE</option>
+              <option value="CLIM">CLIM</option><option value="MEZZ">MEZZ</option><option value="REG">REG</option>
+              <option value="RPP">RPP</option><option value="SAN">SAN</option><option value="TUB">TUB</option>
             </select>
           </div>
         </div>
@@ -431,12 +431,26 @@ function startApp() {
   if (currentUser.role === 'responsable')
     document.getElementById('badge-role').style.display = 'inline';
   document.getElementById('f-agent').value = currentUser.numero + ' — ' + currentUser.nom;
-  // Pré-remplir la zone de travail depuis le profil agent (modifiable)
-  var wz = document.getElementById('f-workzone');
-  if (currentUser.zone && currentUser.zone !== 'ALL') {
-    wz.value = currentUser.zone;
-  }
   showTab(0);
+  // Pré-remplir la zone de travail depuis le profil agent (modifiable)
+  // Délai court pour s'assurer que le DOM est rendu
+  setTimeout(function() {
+    var wz = document.getElementById('f-workzone');
+    if (currentUser.zone && currentUser.zone !== 'ALL') {
+      wz.value = currentUser.zone;
+      // Vérifier que la valeur a bien été settée
+      if (!wz.value) {
+        // Chercher l'option correspondante manuellement
+        for (var i = 0; i < wz.options.length; i++) {
+          if (wz.options[i].value === currentUser.zone ||
+              wz.options[i].text  === currentUser.zone) {
+            wz.selectedIndex = i;
+            break;
+          }
+        }
+      }
+    }
+  }, 100);
 }
 
 // ═══════════════════════════════════════════════════
@@ -531,42 +545,38 @@ function captureFromModal() {
   canvas.width  = video.videoWidth  || 1280;
   canvas.height = video.videoHeight || 720;
   canvas.getContext('2d').drawImage(video, 0, 0);
-
-  // Compression : qualité 0.7, max 1200px de large
-  var ctx = canvas.getContext('2d');
-  var maxW = 1200;
-  if (canvas.width > maxW) {
-    var ratio = maxW / canvas.width;
-    var tmp = document.createElement('canvas');
-    tmp.width  = maxW;
-    tmp.height = Math.round(canvas.height * ratio);
-    tmp.getContext('2d').drawImage(canvas, 0, 0, tmp.width, tmp.height);
-    currentPhoto = tmp.toDataURL('image/jpeg', 0.7);
-  } else {
-    currentPhoto = canvas.toDataURL('image/jpeg', 0.7);
-  }
-
+  currentPhoto = compressPhoto(canvas);
   showPhotoPreview(currentPhoto);
   closeCamModal();
-  toast('📸 Photo capturée');
+  toast('📸 Photo capturée (' + Math.round(currentPhoto.length/1024) + ' KB)');
 }
 
 function onPhotoFile(e) {
   var file = e.target.files[0];
   if (!file) return;
-  // Redimensionner via canvas pour alléger
   var img = new Image();
   img.onload = function() {
     var c = document.createElement('canvas');
-    var maxW = 1200;
-    var w = img.width, h = img.height;
-    if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
-    c.width = w; c.height = h;
-    c.getContext('2d').drawImage(img, 0, 0, w, h);
-    currentPhoto = c.toDataURL('image/jpeg', 0.7);
+    c.width = img.width; c.height = img.height;
+    c.getContext('2d').drawImage(img, 0, 0);
+    currentPhoto = compressPhoto(c);
     showPhotoPreview(currentPhoto);
+    URL.revokeObjectURL(img.src);
+    toast('📎 Photo chargée (' + Math.round(currentPhoto.length/1024) + ' KB)');
   };
   img.src = URL.createObjectURL(file);
+}
+
+// Compression photo : max 800px, qualité 0.45 → ~10-20 KB base64
+// Assez lisible pour identifier un incident, assez petit pour passer en URL
+function compressPhoto(sourceCanvas) {
+  var maxW = 800;
+  var w = sourceCanvas.width, h = sourceCanvas.height;
+  if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+  var c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(sourceCanvas, 0, 0, w, h);
+  return c.toDataURL('image/jpeg', 0.45);
 }
 
 function showPhotoPreview(src) {
@@ -622,12 +632,13 @@ function saveIncident() {
         st.textContent = '⏳ Envoi de la photo…';
 
         // Découper la photo en morceaux de 50000 chars max pour l'URL
-        var CHUNK = 50000;
+        var CHUNK = 6000;
         var chunks = [];
         for (var i = 0; i < photo.length; i += CHUNK) {
           chunks.push(photo.slice(i, i + CHUNK));
         }
         var total = chunks.length;
+        st.textContent = '⏳ Photo : ' + Math.round(photo.length/1024) + ' KB — ' + total + ' partie(s)…';
 
         // Envoyer chunk par chunk
         function sendChunk(idx) {
@@ -870,7 +881,7 @@ function apiCall(params, onOk, onErr) {
   var url = API_URL + '?' + qs;
   var timer = setTimeout(function() {
     if (window[cb]) { delete window[cb]; if (onErr) onErr(); }
-  }, 20000);
+  }, 30000);
 
   window[cb] = function(data) {
     clearTimeout(timer);
